@@ -7,7 +7,7 @@ import {ERC1155} from "solmate/src/tokens/ERC1155.sol";
 import {Currency} from "v4-core/types/Currency.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
-import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
 import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
@@ -29,7 +29,7 @@ contract PointsHook is BaseHook, ERC1155 {
                 afterInitialize: false,
                 beforeAddLiquidity: false,
                 beforeRemoveLiquidity: false,
-                afterAddLiquidity: false,
+                afterAddLiquidity: true,
                 afterRemoveLiquidity: false,
                 beforeSwap: false,
                 afterSwap: true,
@@ -75,6 +75,31 @@ contract PointsHook is BaseHook, ERC1155 {
         _assignPoints(key.toId(), hookData, pointsForSwap);
 
         return (this.afterSwap.selector, 0);
+    }
+
+    function _afterAddLiquidity(
+        address,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata,
+        BalanceDelta delta,
+        BalanceDelta,
+        bytes calldata hookData
+    ) internal override returns (bytes4, BalanceDelta) {
+        // If this is not an ETH-TOKEN pool with this hook attached, ignore
+        if (!key.currency0.isAddressZero())
+            return (this.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+
+        // When adding liquidity, the LP pays ETH into the pool, so the amount
+        // of ETH they provided shows up as a negative amount0 in the delta.
+        uint256 ethAddedAmount = uint256(int256(-delta.amount0()));
+
+        // Reward liquidity providers with points equal to 50% of the ETH they added
+        uint256 pointsForLiquidity = ethAddedAmount / 2;
+
+        // Mint the points
+        _assignPoints(key.toId(), hookData, pointsForLiquidity);
+
+        return (this.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     function _assignPoints(

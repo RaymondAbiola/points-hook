@@ -158,3 +158,39 @@ in the case of Adding Liquidity to a pool,
 
 amount0 = -ve
 amount1 = -ve
+
+---
+
+## My addition: points for liquidity providers
+
+The upstream workshop hook only rewards **swappers**. As a first small feature, I extended
+it to also reward **liquidity providers** — the people who make swaps possible in the first place.
+
+### What it does
+
+Every time someone adds liquidity to an ETH/TOKEN pool with this hook attached, they earn
+points equal to **50% of the ETH they deposited**, minted as the same ERC-1155 points token
+that swappers receive (keyed by pool id).
+
+### How it works
+
+1. Enabled the `afterAddLiquidity` permission in `getHookPermissions()`.
+2. Added an `_afterAddLiquidity` callback. Just like `afterSwap`, the exact amount of ETH
+   deposited is only known *after* the operation runs, so we read it from the returned
+   `BalanceDelta`. Because the LP pays ETH into the pool, `amount0` is negative, so the ETH
+   added is `uint256(int256(-delta.amount0()))`.
+3. Reused the existing `_assignPoints(...)` helper, so the same `hookData` convention
+   (ABI-encoded recipient address) decides who gets credited — pass no/zero address and no
+   points are minted.
+4. The hook returns `BalanceDeltaLibrary.ZERO_DELTA`, so it never takes a cut of the
+   liquidity being added.
+
+### Test
+
+`test_addLiquidity_earnsPoints` in `test/PointsHook.t.sol` adds liquidity with the caller's
+address in `hookData`, reads the actual ETH deposited from the returned `BalanceDelta`, and
+asserts the caller's points balance increases by exactly 50% of that amount.
+
+```
+forge test -vv
+```

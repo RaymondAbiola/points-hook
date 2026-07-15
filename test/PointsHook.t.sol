@@ -13,6 +13,7 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
@@ -46,7 +47,9 @@ contract TestPointsHook is Test, Deployers, ERC1155TokenReceiver {
         token.mint(address(1), 1000 ether);
 
         // Deploy hook to an address that has the proper flags set
-        uint160 flags = uint160(Hooks.AFTER_SWAP_FLAG);
+        uint160 flags = uint160(
+            Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_ADD_LIQUIDITY_FLAG
+        );
         deployCodeTo("PointsHook.sol", abi.encode(manager), address(flags));
 
         // Deploy our hook
@@ -126,5 +129,47 @@ contract TestPointsHook is Test, Deployers, ERC1155TokenReceiver {
             poolIdUint
         );
         assertEq(pointsBalanceAfterSwap - pointsBalanceOriginal, 2 * 10 ** 14);
+    }
+
+    function test_addLiquidity_earnsPoints() public {
+        uint256 poolIdUint = uint256(PoolId.unwrap(key.toId()));
+        uint256 pointsBalanceOriginal = hook.balanceOf(
+            address(this),
+            poolIdUint
+        );
+
+        // Set user address in hook data so the LP is credited with points
+        bytes memory hookData = abi.encode(address(this));
+
+        // Add liquidity across the same tick range used in setUp
+        uint160 sqrtPriceAtTickUpper = TickMath.getSqrtPriceAtTick(60);
+
+        uint256 ethToAdd = 0.05 ether;
+        uint128 liquidityDelta = LiquidityAmounts.getLiquidityForAmount0(
+            SQRT_PRICE_1_1,
+            sqrtPriceAtTickUpper,
+            ethToAdd
+        );
+
+        BalanceDelta delta = modifyLiquidityRouter.modifyLiquidity{
+            value: ethToAdd
+        }(
+            key,
+            ModifyLiquidityParams({
+                tickLower: -60,
+                tickUpper: 60,
+                liquidityDelta: int256(uint256(liquidityDelta)),
+                salt: bytes32(0)
+            }),
+            hookData
+        );
+
+        // The LP paid ETH into the pool, so amount0 in the delta is negative
+        uint256 ethActuallyAdded = uint256(int256(-delta.amount0()));
+        uint256 expectedPoints = ethActuallyAdded / 2;
+
+        uint256 pointsBalanceAfter = hook.balanceOf(address(this), poolIdUint);
+        assertEq(pointsBalanceAfter - pointsBalanceOriginal, expectedPoints);
+        assertGt(expectedPoints, 0);
     }
 }
